@@ -1,5 +1,4 @@
 from singleton_tools import SingletonMeta
-import webbrowser
 import os
 
 class HxGraphicTools(metaclass=SingletonMeta):
@@ -103,9 +102,6 @@ class HxGraphicTools(metaclass=SingletonMeta):
             path = os.path.abspath('temp_table.html')
             with open(path, 'w') as f:
                 f.write(html)
-
-            # Abrir el archivo HTML en el navegador
-            webbrowser.open('file://' + path)
 
     @staticmethod
     def plot_dataframe_html_podium(df, save_path: str, save: bool = False):
@@ -231,5 +227,3 @@ class HxGraphicTools(metaclass=SingletonMeta):
             with open(path, 'w') as f:
                 f.write(html)
 
-            # Abrir el archivo HTML en el navegador
-            webbrowser.open('file://' + path)

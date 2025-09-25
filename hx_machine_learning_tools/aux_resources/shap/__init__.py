@@ -228,7 +228,7 @@ class MlShapTools:
         except Exception as e:
             print(f"Error generando boxplot: {e}")
 
-    def save_waterfall_plot(self, instance_idx: int = 0, show_figure: bool = False):
+    def save_waterfall_plot(self, instance_idx: int = 0):
         """
         Genera gráfico waterfall para una instancia específica.
 

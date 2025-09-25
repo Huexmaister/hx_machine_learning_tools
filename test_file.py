@@ -1,6 +1,7 @@
 from hx_machine_learning_tools import HxLightGbmClassifier, HxXtremeGradientBoostingClassifier, HxCatBoostClassifier, HxRandomForestClassifier
+from hx_machine_learning_tools import HxLightGbmRegressor, HxXtremeGradientBoostingRegressor, HxCatBoostRegressor
 from constants_and_tools import ConstantsAndTools
-from sklearn.datasets import load_breast_cancer
+from sklearn.datasets import load_breast_cancer, load_diabetes
 from sklearn.model_selection import train_test_split
 import pandas as pd
 
@@ -8,24 +9,6 @@ import pandas as pd
 class Test:
     def __init__(self):
         self.CT: ConstantsAndTools = ConstantsAndTools()
-
-        # Cargar dataset (ya viene limpio y preparado para clasificación binaria)
-        dataset = load_breast_cancer()
-
-        # Pasar a DataFrame para usar como tus otros datasets
-        x = pd.DataFrame(dataset.data, columns=dataset.feature_names)
-        y = pd.DataFrame(dataset.target, columns=["target"])
-
-        # Dividir en train/test si lo necesitas
-        x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42)
-
-        # Crear diccionario como espera tu clase
-        self.data_dict = {
-            "x_train": x_train,
-            "y_train": y_train,
-            "x_test": x_test,
-            "y_test": y_test
-        }
 
         self.lgbm_bounds: dict = {
             # 'num_leaves': (2, 1024),
@@ -52,25 +35,88 @@ class Test:
             'penalties_coefficient': 1
         }
 
-    def train(self):
+    def train_classifiers(self):
+        # -- 0: DATA--------------------------------
+
+        # Cargar dataset (ya viene limpio y preparado para clasificación binaria)
+        dataset = load_breast_cancer()
+
+        # Pasar a DataFrame para usar como tus otros datasets
+        x = pd.DataFrame(dataset.data, columns=dataset.feature_names)
+        y = pd.DataFrame(dataset.target, columns=["target"])
+
+        # Dividir en train/test si lo necesitas
+        x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42)
+
+        # Crear diccionario como espera tu clase
+        data_dict = {
+            "x_train": x_train,
+            "y_train": y_train,
+            "x_test": x_test,
+            "y_test": y_test
+        }
+
         # -- 1: LGBM
-        lgbm = HxLightGbmClassifier(self.data_dict, self.lgbm_bounds, None, 'accuracy','binary')
+        lgbm = HxLightGbmClassifier(data_dict, self.lgbm_bounds, None, 'accuracy','binary')
         lgbm.fit_and_get_model_and_results()
         lgbm.execute_shap_analysis()
 
         # -- 2: XGB
-        xgb = HxXtremeGradientBoostingClassifier(self.data_dict, self.xgb_bounds, None, 'accuracy','binary')
+        xgb = HxXtremeGradientBoostingClassifier(data_dict, self.xgb_bounds, None, 'accuracy','binary')
         xgb.fit_and_get_model_and_results()
         xgb.execute_shap_analysis()
 
         # -- 3: CAT
-        cat = HxCatBoostClassifier(self.data_dict, self.cat_bounds, None, 'accuracy','binary')
+        cat = HxCatBoostClassifier(data_dict, self.cat_bounds, None, 'accuracy','binary')
         cat.fit_and_get_model_and_results()
         cat.execute_shap_analysis()
 
         # -- 4: RF
-        rf = HxRandomForestClassifier(self.data_dict, self.xgb_bounds, None, 'accuracy','binary')
+        rf = HxRandomForestClassifier(data_dict, self.xgb_bounds, None, 'accuracy','binary')
         rf.fit_and_get_model_and_results()
         rf.execute_shap_analysis()
 
-Test().train()
+    def train_regressors(self):
+
+        # -- 0: DATA    ------------------------------------------------
+
+        # Cargar dataset de diabetes (ya normalizado y sin missing values)
+        dataset = load_diabetes()
+
+        # Convertir a DataFrame para seguir el mismo formato que usas
+        x = pd.DataFrame(dataset.data, columns=dataset.feature_names)
+        y = pd.DataFrame(dataset.target, columns=["target"])
+
+        # Dividir en train/test
+        x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42)
+
+        # Crear diccionario en el formato esperado
+        data_dict = {
+            "x_train": x_train,
+            "y_train": y_train,
+            "x_test": x_test,
+            "y_test": y_test
+        }
+
+        bins: dict = {
+            "bins": [0, 50, 100, 150, 200, 250, 300, 350, 400],
+            "labels": ["0-50", "50-100", "100-150", "150-200", "200-250", "250-300", "300-350", "350-400"]
+        }
+
+        # -- 1: LGBM
+        lgbm = HxLightGbmRegressor(data_dict, self.lgbm_bounds, None, 'mae','regression', bins=bins)
+        lgbm.fit_and_get_model_and_results()
+        lgbm.execute_shap_analysis()
+
+        # -- 2: XGB
+        xgb = HxXtremeGradientBoostingRegressor(data_dict, self.xgb_bounds, None, 'mse','reg:squarederror', bins=bins)
+        xgb.fit_and_get_model_and_results()
+        xgb.execute_shap_analysis()
+
+        # -- 3: CAT
+        cat = HxCatBoostRegressor(data_dict, self.cat_bounds, None, 'mse','RMSE', bins=bins)
+        cat.fit_and_get_model_and_results()
+        cat.execute_shap_analysis()
+
+
+Test().train_regressors()

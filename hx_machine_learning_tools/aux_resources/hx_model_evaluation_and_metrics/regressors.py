@@ -2,80 +2,105 @@ from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error, m
 from hx_machine_learning_tools.aux_resources import CorrelationsAndWeights
 from hx_machine_learning_tools.aux_resources import HxGraphicTools
 from constants_and_tools import ConstantsAndTools
-from typing import Dict, Any
+import plotly.graph_objects as go
 import plotly.express as px
+from typing import List
 import pandas as pd
 import numpy as np
-import os
+
 
 class RegressorMetricsCalculations:
     def __init__(self,
-                 df_result,
-                 model_path: str,
-                 x_test,
+                 probs_result_df,
+                 model_save_path: str,
+                 x_test_df: pd.DataFrame,
                  model,
                  importances: list,
-                 target_col_list: list,
+                 target_col_name: str,
                  model_name="a",
                  bins_dict=None):
         """
         Este metodo se va a encargar de obtener las métricas de las target, su estratificación, llamar al shap si es preciso y devolver la informacion.
-        Claves: Si se pasan las listas real_value_list, pos_prob_list, o pred_val_list con info, se usará su contenido. Sino, poe defecto se usarán los nombres que
-        se han definido en las propiedades del constructor
-        :param df_result:
-        :param x_test:
+
+        :param probs_result_df: Diccionario que contiene el y_test real, y el y_predicho
+        :param model_save_path:
+        :param x_test_df:
         :param model:
         :param importances:
-        :param target_col_list:
+        :param target_col_name:
         :param model_name:
         :param bins_dict:
         """
 
+        # ----------------------------------------------------------------------------------------------------
+        # -- 1: Instancio toolkits que voy a nacesitar
+        # ----------------------------------------------------------------------------------------------------
+
+        # ---- 1.1: Instancio constants
         self.CT: ConstantsAndTools = ConstantsAndTools()
+
+        # ---- 1.2: Los gráficos de métricas
         self.GT: HxGraphicTools = HxGraphicTools()
 
-        # -- Copiamos el df para evitar el warning
-        self.df_result: pd.DataFrame = df_result.copy()
+        # ----------------------------------------------------------------------------------------------------
+        # -- 2: Almaceno parámetros en propiedades
+        # ----------------------------------------------------------------------------------------------------
 
-        # -- Obtengo la lista de columnas target
-        self.target_col_list: list = target_col_list
+        # ---- 2.1: Copio el df que contiene el valor real de test, la probabilidad positiva y la negativa
+        self.probs_result_df: pd.DataFrame = probs_result_df.copy()
 
-        # -- Creo el dataframe de metricas para estratificacion
+        # ---- 2.2: Obtengo el nombre de la columna target
+        self.target_col_name: str = target_col_name
+
+        # ---- 2.3: Creo el dataframe de metricas para estratificacion
         self.stratify_df: pd.DataFrame = pd.DataFrame(columns=["confidence"])
 
-        # Creamos la columna valor predicho que contiene las prediciones del modelo redondeadas
-        for target in self.target_col_list:
-            if f"pred_value_{target}" not in [z for z in self.df_result.columns]:
-                try:  # Creo un try except necesario para las mean preds
-                    self.df_result[f"pred_value_{target}"] = np.round(self.df_result[f'positive_proba_{target}'])
-                except KeyError:
-                    self.df_result[f"pred_value_{target}"] = np.round(self.df_result[f"{target}"])
+        # ---- 2.5: Almaceno el path donde se van a guardar los informes (si procede)
+        self.model_save_path: str = model_save_path
 
-        self.model_path: str = model_path
-        self.X_test = x_test
+        # ---- 2.6: Almaceno el df de test sin la target en una propiedad
+        self.X_test_df: pd.DataFrame = x_test_df
+
+        # ---- 2.7: Almaceno la instancia del modelo en una propiedad
         self.model = model
-        self.importances = importances
+
+        # ---- 2.8: Almaceno la lista de pesos del modelo
+        self.importances: List = importances
+
+        # ---- 2.9: Almaceno el nombre del modelo
         self.model_name: str = model_name
-        self.bins_dict: dict = bins_dict
+
+        # ---- 2.10: Almaceno el diccionario de bins que se va a usar para estratificar
+        self.bins_dict: dict | None = bins_dict
 
     def run(self):
-        # -- Creamos el path donde se va a almacenar la informacion
-        if not os.path.exists(self.model_path):
-            os.makedirs(self.model_path)
+        """
+        Metodo que realiza la evaluacion completa de un modelo
+        1: Obtiene los pesos
+        2: Obtiene las métricas
+        3: Obtiene la estratificacion
+        :return:
+        """
+        # ----------------------------------------------------------------------------------------------------
+        # -- 1: Realizo la evaluacion de pesos y correlaciones entre variables
+        # ----------------------------------------------------------------------------------------------------
 
-        # -- En caso de que existan importances, calculamos las correlaciones
-
+        # ---- 1.1: En caso de que existan pesos en la propiedad (Lista con los pesos) ejecutamis
         if self.importances is not None and self.importances[0] is not None:
 
             try:
-                CorrelationsAndWeights(self.X_test, self.importances[0]).run()
+                CorrelationsAndWeights(self.X_test_df, self.importances[0]).run()
             except ValueError:
                 pass
 
+        # ----------------------------------------------------------------------------------------------------
+        # -- 2: Ejecutamos evaluate regression para realizar todas las tareas de evaluacion y retornamos
+        # ----------------------------------------------------------------------------------------------------
 
-        # -- Ejecutamos evaluate classification para realizar todas las tareas de evaluacion
+        # ---- 2.1: Llamo al metodo de evaluar regresion y obtengo las metricas
         metrics_dict: dict = self.evaluate_regression()
 
+        # ---- 2.2: Retorno las metricas (no lo hago directo porque me facilita el debug si es necesario)
         return metrics_dict
 
     def evaluate_regression(self):
@@ -83,114 +108,137 @@ class RegressorMetricsCalculations:
         Metodo para obtener un diccionario de métricas de cada columna target
         :return:
         """
+        # ----------------------------------------------------------------------------------------------------
+        # -- 1: Obtengo las métricas y las almaceno
+        # ----------------------------------------------------------------------------------------------------
+
+        # ---- 1.1: Creo el diccionario de metricas
         all_metrics_dict: dict = {}
 
-        for target in self.target_col_list:
-            # Crea una columna de "aciertos" usando np.where
-            self.df_result[f"aciertos_{target}"] = np.where(
-                (self.df_result[f"real_value_{target}"] == 1) & (self.df_result[f"positive_proba_{target}"] >= 0.5) |
-                (self.df_result[f"real_value_{target}"] == 0) & (self.df_result[f"positive_proba_{target}"] < 0.5),
-                True,  # Acierto si ambas condiciones son ciertas
-                False  # Fallo si no coinciden
+        # ---- 1.2: MSE (Mean Squared Error)
+        mse = mean_squared_error(self.probs_result_df[f'real_value_{self.target_col_name}'], self.probs_result_df[f'predict_value_{self.target_col_name}'])
+
+        # ---- 1.3: MAE (Mean Absolute Error)
+        mae = mean_absolute_error(self.probs_result_df[f'real_value_{self.target_col_name}'], self.probs_result_df[f'predict_value_{self.target_col_name}'])
+
+        # ---- 1.4: R2 (Coeficiente de Pearson)
+        r2 = r2_score(self.probs_result_df[f'real_value_{self.target_col_name}'], self.probs_result_df[f'predict_value_{self.target_col_name}'])
+
+        # ---- 1.5: RMSE (Root Mean squared error)
+        rmse = np.sqrt(mse)
+
+        # ---- 1.6: MSLE (Mean squared log error) and RMSLE (Root Mean squared log error)
+        try:
+            # ------ 1.6.1: MSLE
+            msle = mean_squared_log_error(self.probs_result_df[f'real_value_{self.target_col_name}'], self.probs_result_df[f'predict_value_{self.target_col_name}'])
+
+            # ------ 1.6.2: RMSLE
+            rmsle = np.sqrt(msle)
+
+        except ValueError:
+            msle = np.nan
+            rmsle = np.nan
+
+        # ---- 1.7: MAPE (Mean absolute percentage error)
+        mape = mean_absolute_percentage_error(self.probs_result_df[f'real_value_{self.target_col_name}'], self.probs_result_df[f'predict_value_{self.target_col_name}'])
+
+        # ----------------------------------------------------------------------------------------------------
+        # -- 2: Pinto las métricas por consola
+        # ----------------------------------------------------------------------------------------------------
+
+        self.CT.IT.info_print(f"MSE (Mean Squared Error):                {round(mse, 4)}", "light_cyan")
+        self.CT.IT.info_print(f"MAE (Mean Absolute Error):               {round(mae, 4)}", "light_cyan")
+        self.CT.IT.info_print(f"R2 (Coeficiente de Pearson):             {round(r2, 4)}", "light_cyan")
+        self.CT.IT.info_print(f"RMSE (Root Mean squared error):          {round(rmse, 4)}", "light_cyan")
+        self.CT.IT.info_print(f"MSLE (Mean squared log error):           {round(msle, 4)}", "light_cyan")
+        self.CT.IT.info_print(f"RMSLE (Root Mean squared log error):     {round(rmsle, 4)}", "light_cyan")
+        self.CT.IT.info_print(f"MAPE (Mean absolute percentage error):   {round(mape, 4)}", "light_cyan")
+
+        # ----------------------------------------------------------------------------------------------------
+        # -- 3: Calculo y muestro la estratificacion si self.bins no es none
+        # ----------------------------------------------------------------------------------------------------
+
+        if self.bins_dict is not None:
+
+            # ---- 3.1:  Creamos la columna de estratificacion utilizando pd.cut(), esto depende de lo que le pasamos con parametro en el bins_dict
+            self.probs_result_df[f'stratification_{self.target_col_name}'] = pd.cut(self.probs_result_df[f"predict_value_{self.target_col_name}"],
+                                                                                    bins=self.bins_dict["bins"],
+                                                                                    labels=self.bins_dict["labels"],
+                                                                                    right=False)
+
+            # ---- 3.2: Creamos dos columnas, f'stratification_{self.target_col_name}_high' y f'stratification_{self.target_col_name}_low' para separar los bounds
+            self.probs_result_df[f'stratification_{self.target_col_name}_high'] =self.probs_result_df[f'stratification_{self.target_col_name}'].str.split('-').str[0].astype(float)
+            self.probs_result_df[f'stratification_{self.target_col_name}_low'] =self.probs_result_df[f'stratification_{self.target_col_name}'].str.split('-').str[1].astype(float)
+
+            # ---- 3.3: Una vez tengo las columnas superior e inferior en float, valido si se ha acertado o fallado en el estrato
+
+            self.probs_result_df[f"aciertos_{self.target_col_name}"] = (
+                self.probs_result_df[f"real_value_{self.target_col_name}"]
+                .between(
+                    self.probs_result_df[f'stratification_{self.target_col_name}_high'],  # Limite superior
+                    self.probs_result_df[f'stratification_{self.target_col_name}_low'],  # Limite inferior
+                    inclusive='both'
+                )
             )
 
-            # Filtra los valores correctos
-            df_true = self.df_result[self.df_result[f"aciertos_{target}"]]
+            # ---- 4.2: Creo el stratify df que se va a ir agregando al self.stratify df
+            stratify_df_base_cols: list = ["confidence", "total_predicho", "aciertos", "fallos"]
+            self.stratify_df: pd.DataFrame = pd.DataFrame(columns=[f'{z}_{self.target_col_name}' if z != "confidence" else f"{z}" for z in stratify_df_base_cols])
 
-            # -- Sacamos los elementos que el modelo predice si y es si (VERDADEROS POSITIVOS)
-            true_positive = self.df_result[(self.df_result[f"real_value_{target}"] == 1.0) & (self.df_result[f"aciertos_{target}"])].shape[0]
 
-            # -- Sacamos los elementos que el modelo predice no y es no (VERDADEROS NEGATIVOS)
-            true_negative = self.df_result[(self.df_result[f"real_value_{target}"] == 0.0) & (self.df_result[f"aciertos_{target}"])].shape[0]
-
-            # -- Sacamos los elementos que el modelo predice no y en realidad es si (FALSOS NEGATIVOS)
-            false_negative = self.df_result[(self.df_result[f"real_value_{target}"] == 1.0) & (~self.df_result[f"aciertos_{target}"])].shape[0]
-
-            # -- Sacamos los elementos que el modelo predice si y en realidad es no (FALSOS POSITIVOS)
-            false_positive = self.df_result[(self.df_result[f"real_value_{target}"] == 0.0) & (~self.df_result[f"aciertos_{target}"])].shape[0]
-
-            self.CT.IT.sub_intro_print(f"ClassifierMetricsCalculation 1: Métricas {self.model_name} {target}")
-            accuracy = round(df_true.shape[0] / self.df_result.shape[0] * 100, 3)
-            self.CT.IT.info_print(f"Accuracy:      {accuracy} %",
-                                  "light_cyan")
-
-            # -- Sacamos la SENSIBILIDAD del modelo
-            sensibility = round(true_positive / (true_positive + false_negative) * 100, 3)
-            self.CT.IT.info_print(f"Recall:        {sensibility} % -------  Formula: ({true_positive} / ({true_positive} + {false_negative} ) * 100)",
-                                  "light_cyan")
-
-            # -- Sacamos la especificidad del modelo
-            specificity = round(true_negative / (true_negative + false_positive) * 100, 3)
-            self.CT.IT.info_print(f"Specificity:   {specificity} % -------  Formula: ({true_negative} / ({true_negative} + {false_positive} ) * 100)",
-                                  "light_cyan")
-
-            # -- Sacamos la F1 del modelo
-            f1 = round(((accuracy * sensibility) / (accuracy + sensibility)) * 2, 3)
-            self.CT.IT.info_print(f"F1:            {f1} % -------  Formula: (({accuracy * sensibility:.2f} / {accuracy + sensibility:.2f}) * 2)",
-                                  "light_cyan")
-
-            # -- Creamos la nueva columna utilizando pd.cut(), esto depende de lo que le pasamos con parametro en el bins_dict
-            self.df_result[f'stratification_{target}'] = pd.cut(self.df_result[f"positive_proba_{target}"], bins=self.bins_dict["bins"], labels=self.bins_dict["labels"], right=False)
-
-            # -- Creacion de metricas por cada bin de stratification
-
-            # -- creo el stratify df que se va a ir agregando al self.stratify df
-            stratify_df_base_cols: list = ["confidence", "total_predicho", "aciertos", "fallos", "TP_total_TP", "FP_total_FP", "TN_total_TN", "FN_total_FN"]
-            stratify_df: pd.DataFrame = pd.DataFrame(columns=[f'{z}_{target}' if z != "confidence" else f"{z}" for z in stratify_df_base_cols])
-
-            # Relleno  metricas
+            # ---- 4.3: Relleno  iterativamente los bins de estratificacion en base al self.bins_dict
             for bn in self.bins_dict["labels"][::-1]:
-                if bn in self.df_result[f"stratification_{target}"].unique().tolist():
-                    res_shape: int = self.df_result.shape[0]
-                    bn_df: pd.DataFrame = self.df_result[self.df_result[f"stratification_{target}"] == bn]
-                    bn_df_aciertos: pd.DataFrame = bn_df[bn_df[f"aciertos_{target}"]]
-                    bn_df_fallos: pd.DataFrame = bn_df[(~bn_df[f"aciertos_{target}"])]
-                    tp_df: pd.DataFrame = bn_df_aciertos[(bn_df_aciertos[f'real_value_{target}'] == 1.0) | (bn_df_aciertos[f'real_value_{target}'] == 1)]
-                    fp_df: pd.DataFrame = bn_df_fallos[(bn_df_fallos[f'real_value_{target}'] == 0.0) | (bn_df_fallos[f'real_value_{target}'] == 0)]
-                    tn_df: pd.DataFrame = bn_df_aciertos[(bn_df_aciertos[f'real_value_{target}'] == 0.0) | (bn_df_aciertos[f'real_value_{target}'] == 0)]
-                    fn_df: pd.DataFrame = bn_df_fallos[(bn_df_fallos[f'real_value_{target}'] == 1.0) | (bn_df_fallos[f'real_value_{target}'] == 1)]
+                if bn in self.probs_result_df[f"stratification_{self.target_col_name}"].unique().tolist():
+                    res_shape: int = self.probs_result_df.shape[0]
+                    bn_df = self.probs_result_df[self.probs_result_df[f"stratification_{self.target_col_name}"] == bn]
+                    bn_df_aciertos = bn_df[bn_df[f"aciertos_{self.target_col_name}"]]
+                    bn_df_fallos = bn_df[(~bn_df[f"aciertos_{self.target_col_name}"])]
 
-                    stratify_df.loc[len(stratify_df)] = {
+                    self.stratify_df.loc[len(self.stratify_df)] = {
                         f"confidence": bn,
-                        f"total_predicho_{target}": f"{round(bn_df.shape[0] / res_shape * 100, 2)}%  ({bn_df.shape[0]}/{res_shape})" if res_shape != 0 else pd.NA,
-                        f"aciertos_{target}": f"{round(bn_df_aciertos.shape[0] / bn_df.shape[0] * 100, 2)}%  ({bn_df_aciertos.shape[0]}/{bn_df.shape[0]})" if bn_df.shape[0] != 0 else pd.NA,
-                        f"fallos_{target}": f"{round(bn_df_fallos.shape[0] / bn_df.shape[0] * 100, 2)}%  ({bn_df_fallos.shape[0]}/{bn_df.shape[0]})" if bn_df.shape[0] != 0 else pd.NA,
-                        f"TP_total_TP_{target}": f"{round(tp_df.shape[0] / true_positive * 100, 2)}%  ({tp_df.shape[0]}/{true_positive})" if true_positive != 0 else pd.NA,
-                        f"FP_total_FP_{target}": f"{round(fp_df.shape[0] / false_positive * 100, 2)}%  ({fp_df.shape[0]}/{false_positive})" if false_positive != 0 else pd.NA,
-                        f"TN_total_TN_{target}": f"{round(tn_df.shape[0] / true_negative * 100, 2)}%  ({tn_df.shape[0]}/{true_negative})" if true_negative != 0 else pd.NA,
-                        f"FN_total_FN_{target}": f"{round(fn_df.shape[0] / false_negative * 100, 2)}%  ({fn_df.shape[0]}/{false_negative})" if false_negative != 0 else pd.NA,
-
+                        f"total_predicho_{self.target_col_name}": f"{round(bn_df.shape[0] / res_shape * 100, 2)}%  ({bn_df.shape[0]}/{res_shape})" if res_shape != 0 else pd.NA,
+                        f"aciertos_{self.target_col_name}": f"{round(bn_df_aciertos.shape[0] / bn_df.shape[0] * 100, 2)}%  ({bn_df_aciertos.shape[0]}/{bn_df.shape[0]})" if bn_df.shape[0] != 0 else pd.NA,
+                        f"fallos_{self.target_col_name}": f"{round(bn_df_fallos.shape[0] / bn_df.shape[0] * 100, 2)}%  ({bn_df_fallos.shape[0]}/{bn_df.shape[0]})" if bn_df.shape[0] != 0 else pd.NA,
                     }
 
-            # -- Agrego las target al stratify df
-            if self.stratify_df.shape[0] == 0:
-                self.stratify_df = stratify_df
-            else:
-                # self.CT.IT.printTabulateDf(self.stratify_df)
-                # self.CT.IT.printTabulateDf(stratify_df)
-                self.stratify_df = pd.merge(self.stratify_df, stratify_df, on="confidence", how="left")
+        # ----------------------------------------------------------------------------------------------------
+        # -- 4: Creo gráficos, pinto y retorno
+        # ----------------------------------------------------------------------------------------------------
 
-            self.plot_stratify_barplot(self.df_result, f"{self.model_path}/stratify_barplot_{target}.html",
-                                       f"stratification_{target}", f"aciertos_{target}")
+        # ---- 4.1: Creo el gráfico de estratificacion en barras
+        if self.bins_dict is not None:
+            self.plot_stratify_barplot(self.probs_result_df, f"{self.model_save_path}/stratify_barplot_{self.target_col_name}.html",
+                                       f"stratification_{self.target_col_name}", f"aciertos_{self.target_col_name}")
 
-            all_metrics_dict[f"{target}"] = {"metrics": {"accuracy": accuracy,
-                                                         "recall": sensibility,
-                                                         "specifity": specificity,
-                                                         "f1": f1,
-                                                         "ALL": {"TP": true_positive, "FP": false_positive,
-                                                                 "TN": true_negative, "FN": false_negative},
-                                                         }
-                                             }
+        # ---- 4.2: Creo el diccionario con todas las metricas que voy a retornar
+        all_metrics_dict[f"{self.target_col_name}"] = {
+            "metrics": {
+                "mse": mse,
+                "mae": mae,
+                "r2": r2,
+                "rmse": rmse,
+                "msle": msle,
+                "rmsle": rmsle,
+                "mape": mape,
+            }
+        }
 
-        self.CT.IT.sub_intro_print(f"ClassifierMetricsCalculation 2: Tabla de estratificacion {self.model_name}")
-        self.CT.IT.print_tabulate_df(self.stratify_df, row_print=100)
+        # ---- 4.3: Pinto la entrada y las metricas de estratificacion
+        if self.bins_dict is not None:
+            self.CT.IT.sub_intro_print(f"RegressorMetricsCalculation: Tabla de estratificacion {self.model_name}")
+            self.CT.IT.print_tabulate_df(self.stratify_df, row_print=100)
 
-        self.GT.plot_dataframe_html(self.stratify_df, save_path=f"{self.model_path}/stratify_df.html", save=True)
+        # ---- 4.4: Almaceno el gráfico de la estratificacion en formato tabla
+        if self.bins_dict is not None:
+            self.GT.plot_dataframe_html(self.stratify_df, save_path=f"{self.model_save_path}/stratify_df.html", save=True)
 
+        # ---- 4.5: Creo el gráfico de dispersión y lo almaceno en html
+        self.plot_and_save_dotplot()
+
+        # ---- 4.6: Retorno el diccionario completo de metricas
         return all_metrics_dict
 
-    # <editor-fold desc="Metodos secundarios usados en evaluateClasification    --------------------------------------------------------------------------------------------------">
-
+    # <editor-fold desc="Metodos secundarios usados en evaluateRegression   --------------------------------------------------------------------------------------------------">
 
     @staticmethod
     def plot_stratify_barplot(df: pd.DataFrame, path_and_name: str, stratification_colname: str = "stratification", accurate_colname: str = "aciertos", show: bool = False):
@@ -237,8 +285,94 @@ class RegressorMetricsCalculations:
             # Mostrar el gráfico
             fig.show()
 
-    # </editor-fold>
+    def plot_and_save_dotplot(self):
+        """
+        Genera un gráfico de dispersión (dotplot) con Plotly para comparar valores reales vs. predichos
+        y lo guarda en formato HTML y PNG, mostrando el gráfico en pantalla completa y con un estilo profesional.
+        """
 
+        # Crear el scatter plot interactivo
+        fig = go.Figure()
+
+        # Añadir puntos de dispersión
+        fig.add_trace(go.Scatter(
+            x=self.probs_result_df[f'real_value_{self.target_col_name}'],
+            y=self.probs_result_df[f'predict_value_{self.target_col_name}'],
+            mode='markers',
+            name='Predicciones',
+            marker=dict(
+                size=8,
+                opacity=0.8,
+                color='royalblue',
+                line=dict(width=0.5, color='white')
+            )
+        ))
+
+        # Línea de referencia diagonal (y = x)
+        min_val = min(
+            self.probs_result_df[f'real_value_{self.target_col_name}'].min(),
+            self.probs_result_df[f'predict_value_{self.target_col_name}'].min()
+        )
+        max_val = max(
+            self.probs_result_df[f'real_value_{self.target_col_name}'].max(),
+            self.probs_result_df[f'predict_value_{self.target_col_name}'].max()
+        )
+
+        fig.add_trace(go.Scatter(
+            x=[min_val, max_val],
+            y=[min_val, max_val],
+            mode='lines',
+            name='Referencia y=x',
+            line=dict(color='black', dash='dash', width=2)
+        ))
+
+        # Configuración de estilo y pantalla completa
+        fig.update_layout(
+            title=dict(
+                text='Dispersión de predicciones vs valores reales',
+                x=0.5,  # centrar título
+                xanchor='center',
+                font=dict(size=22, family="Arial, Bold")
+            ),
+            xaxis=dict(
+                title=f'Real Value: {self.target_col_name}',
+                showgrid=True,
+                zeroline=False,
+                showline=True,
+                linewidth=1,
+                linecolor='black',
+                mirror=True
+            ),
+            yaxis=dict(
+                title=f'Predicted Value: {self.target_col_name}',
+                showgrid=True,
+                zeroline=False,
+                showline=True,
+                linewidth=1,
+                linecolor='black',
+                mirror=True
+            ),
+            template='plotly_white',
+            legend=dict(
+                orientation="h",
+                y=-0.15,
+                x=0.5,
+                xanchor="center"
+            ),
+            autosize=True,
+            width=None,
+            height=None
+        )
+
+        # Mostrar en pantalla completa (modo responsive en navegador)
+        fig.update_layout(
+            margin=dict(l=50, r=50, t=80, b=80),
+        )
+
+        # Guardar el gráfico como HTML (interactivo y pantalla completa)
+        fig.write_html(f"{self.model_save_path}/scatter_plot.html", full_html=True, include_plotlyjs='cdn')
+
+    # </editor-fold>
 
 class EvaluateRegressor:
     def __init__(self, data_dict: dict, model_name: str, selected_metric: str | None = None):
@@ -267,7 +401,7 @@ class EvaluateRegressor:
         self.y_pred_test = data_dict["y_pred_test"]
 
         # ---- 1.6: Almaceno las columnas target en la propiedad (en esta versión, el multitarget no está habilitado, pero dejo la estructura)
-        self.target_col_names: list = data_dict["target_col_names"]
+        self.target_col_name: str = data_dict["target_col_name"]
 
         # ---- 1.7: Inicializo en None el df que va a contener las métricas
         self.metrics_df = None
@@ -279,39 +413,41 @@ class EvaluateRegressor:
         # --------------------------------------------------------------------------------------------
 
         # ---- 1.1: Pinto la entrada
-        self.CT.IT.sub_intro_print("EvaluateClassifier: Calculando metricas de entrenamiento...")
+        self.CT.IT.sub_intro_print("EvaluateRegressor: Calculando metricas de entrenamiento...")
 
-        # ---- 1.2: Obtengo las metrias
+        # --------------------------------------------------------------------------------------------
+        # -- 2: Calculo las métricas
+        # --------------------------------------------------------------------------------------------
 
-        # -- Mean squared error
+        # ---- 2.1: Mean squared error
         mse_train = mean_squared_error(self.y_train, self.y_pred_train)
-        mse_eval = mean_squared_error(self.y_eval, self.y_pred_eval)
+        mse_eval = mean_squared_error(self.y_eval, self.y_pred_eval) if self.y_eval is not None else None
         mse_test = mean_squared_error(self.y_test, self.y_pred_test)
 
-        # -- Root Mean squared error
+        # ---- 2.2: Root Mean squared error
         rmse_train = np.sqrt(mse_train)
-        rmse_eval = np.sqrt(mse_eval)
+        rmse_eval = np.sqrt(mse_eval) if self.y_eval is not None else None
         rmse_test = np.sqrt(mse_test)
 
-        # -- Mean absolute error
+        # ---- 2.3: Mean absolute error
         mae_train = mean_absolute_error(self.y_train, self.y_pred_train)
-        mae_eval = mean_absolute_error(self.y_eval, self.y_pred_eval)
+        mae_eval = mean_absolute_error(self.y_eval, self.y_pred_eval) if self.y_eval is not None else None
         mae_test = mean_absolute_error(self.y_test, self.y_pred_test)
 
-        # -- Coeficiente de determinacion
+        # ---- 2.4: Coeficiente de determinacion
         r2_train = r2_score(self.y_train, self.y_pred_train)
-        r2_eval = r2_score(self.y_eval, self.y_pred_eval)
+        r2_eval = r2_score(self.y_eval, self.y_pred_eval) if self.y_eval is not None else None
         r2_test = r2_score(self.y_test, self.y_pred_test)
 
         try:
-            # -- Mean squared log error
+            # ---- 2.5: Mean squared log error
             msle_train = mean_squared_log_error(self.y_train, self.y_pred_train)
-            msle_eval = mean_squared_log_error(self.y_eval, self.y_pred_eval)
+            msle_eval = mean_squared_log_error(self.y_eval, self.y_pred_eval) if self.y_eval is not None else None
             msle_test = mean_squared_log_error(self.y_test, self.y_pred_test)
 
-            # -- Root Mean squared log error
+            # ---- 2.6: Root Mean squared log error
             rmsle_train = np.sqrt(msle_train)
-            rmsle_eval = np.sqrt(msle_eval)
+            rmsle_eval = np.sqrt(msle_eval) if self.y_eval is not None else None
             rmsle_test = np.sqrt(msle_test)
 
         except ValueError:
@@ -325,31 +461,34 @@ class EvaluateRegressor:
             rmsle_eval = np.nan
             rmsle_test = np.nan
 
-        # -- Mean absolute percentage error
+        # ---- 2.7: Mean absolute percentage error
         mape_train = mean_absolute_percentage_error(self.y_train, self.y_pred_train)
-        mape_eval = mean_absolute_percentage_error(self.y_eval, self.y_pred_eval)
+        mape_eval = mean_absolute_percentage_error(self.y_eval, self.y_pred_eval) if self.y_eval is not None else None
         mape_test = mean_absolute_percentage_error(self.y_test, self.y_pred_test)
 
-        metric_df = pd.DataFrame(columns=("metric", "train", "eval", "test"))
-        metric_df.loc[len(metric_df)] = ["MSE", f"{round(mse_train, 4)}", round(mse_eval, 4), round(mse_test, 4)]
-        metric_df.loc[len(metric_df)] = ["RMSE", f"{round(rmse_train, 4)}", round(rmse_eval, 4), round(rmse_test, 4)]
-        metric_df.loc[len(metric_df)] = ["MAE", f"{round(mae_train, 4)}", round(mae_eval, 4), round(mae_test, 4)]
-        metric_df.loc[len(metric_df)] = ["R2", f"{round(r2_train, 4)}", round(r2_eval, 4), round(r2_test, 4)]
-        metric_df.loc[len(metric_df)] = ["MSLE", f"{round(msle_train, 4)}", round(msle_eval, 4), round(msle_test, 4)]
-        metric_df.loc[len(metric_df)] = ["RMSLE", f"{round(rmsle_train, 4)}", round(rmsle_eval, 4), round(rmsle_test, 4)]
-        metric_df.loc[len(metric_df)] = ["MAPE", f"{round(mape_train, 4)}", round(mape_eval, 4), round(mape_test, 4)]
-
-        # ---- 1.3: Asigno metrics_df
-        self.metrics_df: pd.DataFrame = metric_df
-
         # --------------------------------------------------------------------------------------------
-        # -- 3: Pinto el df y generoel diccionario de métricas
+        # -- 3: Almaceno las metricas en el df self.metrics df, las pinto y creo el diccionario de metricas
         # --------------------------------------------------------------------------------------------
 
-        # ---- 3.1: Pinto el df
+        # ---- 3.0: Creo una lambda para redondear
+        hx_round = lambda x: round(x, 4) if x is not None else pd.NA
+
+        # ---- 3.1: Almaceno metricas
+        self.metrics_df: pd.DataFrame = pd.DataFrame(columns=("metric", f"train_{self.target_col_name}", f"eval_{self.target_col_name}", f"test_{self.target_col_name}"))
+        self.metrics_df.loc[len(self.metrics_df)] = ["MSE", f"{hx_round(mse_train)}", hx_round(mse_eval), hx_round(mse_test)]
+        self.metrics_df.loc[len(self.metrics_df)] = ["RMSE", f"{hx_round(rmse_train)}", hx_round(rmse_eval), hx_round(rmse_test)]
+        self.metrics_df.loc[len(self.metrics_df)] = ["MAE", f"{hx_round(mae_train)}", hx_round(mae_eval), hx_round(mae_test)]
+        self.metrics_df.loc[len(self.metrics_df)] = ["R2", f"{hx_round(r2_train)}", hx_round(r2_eval), hx_round(r2_test)]
+        self.metrics_df.loc[len(self.metrics_df)] = ["MSLE", f"{hx_round(msle_train)}", hx_round(msle_eval), hx_round(msle_test)]
+        self.metrics_df.loc[len(self.metrics_df)] = ["RMSLE", f"{hx_round(rmsle_train)}", hx_round(rmsle_eval), hx_round(rmsle_test)]
+        self.metrics_df.loc[len(self.metrics_df)] = ["MAPE", f"{hx_round(mape_train)}", hx_round(mape_eval), hx_round(mape_test)]
+
+        # ---- 3.2: Elimino columnas vacías (para no mostrar el eval con NA si no hay eval) Pinto el df
+        self.metrics_df = self.metrics_df.dropna(axis=1, how="all")
+
         self.CT.IT.print_tabulate_df(self.metrics_df)
 
-        # ---- 3.2: Creo el diccionario de metricas para graficarlo finalmente en el genethic con todos los individuos
+        # ---- 3.3: Creo el diccionario de metricas para graficarlo finalmente en el genethic con todos los individuos
         gen_metric_dict: dict = {
             "mse_train": round(mse_train, 4), "mse_test": round(mse_test, 4),
             "rmse_train": round(rmse_train, 4), "rmse_test": round(rmse_test, 4),
@@ -360,22 +499,25 @@ class EvaluateRegressor:
             "mape_train": round(mape_train, 4), "mape_test": round(mape_test, 4),
         }
 
-        del metric_df, self.metrics_df
+        del self.metrics_df
 
-        # ---- 3.3: Devuelvo el diccionario con la metrica seleccionada y las metricas totales
+        # --------------------------------------------------------------------------------------------
+        # -- 4: Hago match y devuelvo el diccionario completo de metricas
+        # --------------------------------------------------------------------------------------------
+
         if self.selected_metric is not None:
             match self.selected_metric:
-                case "MSE":
+                case "mse":
                     return {"metric_train": mse_train, "metric_eval": mse_eval, "metric_test": mse_test, "all_metrics": gen_metric_dict, "selected_metric": self.selected_metric}
-                case "RMSE":
+                case "rmse":
                     return {"metric_train": rmse_train, "metric_eval": rmse_eval, "metric_test": rmse_test, "all_metrics": gen_metric_dict, "selected_metric": self.selected_metric}
-                case "MAE":
+                case "mae":
                     return {"metric_train": mae_train, "metric_eval": mae_eval, "metric_test": mae_test, "all_metrics": gen_metric_dict, "selected_metric": self.selected_metric}
-                case "MSLE":
+                case "msle":
                     return {"metric_train": msle_train, "metric_eval": msle_eval, "metric_test": msle_test, "all_metrics": gen_metric_dict, "selected_metric": self.selected_metric}
-                case "RMSLE":
+                case "rmsle":
                     return {"metric_train": rmsle_train, "metric_eval": rmsle_eval, "metric_test": rmsle_test, "all_metrics": gen_metric_dict, "selected_metric": self.selected_metric}
-                case "MAPE":
+                case "mape":
                     return {"metric_train": mape_train, "metric_eval": mape_eval, "metric_test": mape_test, "all_metrics": gen_metric_dict, "selected_metric": self.selected_metric}
                 case _:
                     raise ValueError("La metrica seleccionada no está contemplada")

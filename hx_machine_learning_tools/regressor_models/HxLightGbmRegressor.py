@@ -1,5 +1,5 @@
+from hx_machine_learning_tools.aux_resources.hx_model_evaluation_and_metrics.regressors import EvaluateRegressor, RegressorMetricsCalculations
 from hx_machine_learning_tools.base_model import HxMachineLearningBaseModel
-from hx_machine_learning_tools.aux_resources.hx_model_evaluation_and_metrics import EvaluateClassifier, ClassifierMetricsCalculations
 from lightgbm import LGBMRegressor
 from hx_machine_learning_tools.aux_resources.shap import MlShapTools
 from typing import Dict, Literal, List, Any, Tuple
@@ -16,8 +16,8 @@ class HxLightGbmRegressor(HxMachineLearningBaseModel):
                  data_dict: Dict[str, pd.DataFrame],
                  hiperparams: dict,
                  id_col_name: str | None,
-                 metric: Literal['accuracy', 'precision', 'recall', 'f1', 'specificity', 'balanced_acc', 'roc_auc'],
-                 problem_type: Literal['binary', 'multiclass'],
+                 metric: Literal['mse', 'rmse', 'mae', 'msle', 'rmsle', 'mape'],
+                 problem_type: Literal['regression', 'regression_l1', 'quantile', 'tweedie'] = 'regression_l1',
                  save_path: str | None = None,
                  bins: dict | None = None,
                  verbose: Literal['show_all', 'show_basics', 'dont_show'] = 'dont_show',
@@ -53,23 +53,17 @@ class HxLightGbmRegressor(HxMachineLearningBaseModel):
         self._verbose: Literal['show_all', 'show_basics', 'dont_show'] = verbose
 
         # ---- 1.2: Metric
-        self._metric: Literal['accuracy', 'precision', 'recall', 'f1', 'specificity', 'balanced_acc', 'roc_auc'] = metric
+        self._metric: Literal['mse', 'rmse', 'mae', 'msle', 'rmsle', 'mape'] = metric
 
         # ---- 1.3: Problem type
-        self._problem_type: Literal['binary', 'multiclass'] = problem_type
+        self._problem_type: Literal['regression', 'regression_l1', 'quantile', 'tweedie'] = problem_type
 
         # --------------------------------------------------------------------------------------------
         # -- 2: Asigno las propiedades estandar
         # --------------------------------------------------------------------------------------------
 
-        # ---- 2.1: Si bins es None, pongo el bins por defecto, sino lo asigno
-        if bins is None:
-            self.bins: Dict[str, List] = {
-                "bins": [0, 0.125, 0.25, 0.375, 0.5,  0.625, 0.75, 0.875, 1],
-                "labels": ["0-12.5", "12.5-25", "25-37.5", "37.5-50", "50-62.5", "62.5-75", "75-87.5", "87.5-100"]
-            }
-        else:
-            self.bins = bins
+        # ---- 2.1: Asigno el bins, por defecto en regresion es None
+        self.bins = bins
 
         # ---- 2.2: Path donde se va a guardar la informacion del modelo
         self.model_save_path: str = self.get_save_path()
@@ -135,17 +129,17 @@ class HxLightGbmRegressor(HxMachineLearningBaseModel):
         # --------------------------------------------------------------------------------------------
 
         # ---- 2.1: Realizo las predicciones
-        y_pred_train = self.model.predict(self.x_train_df).reshape(-1, 1)
-        y_pred_test = self.model.predict(self.x_test_df).reshape(-1, 1)
+        y_pred_train = self.model.predict(self.x_train_df)
+        y_pred_test = self.model.predict(self.x_test_df)
 
         # ---- 2.2. Evalúo y almaceno las metricas
-        metrics: Dict[str, Any] = EvaluateClassifier({"y_train": self.y_train,
+        metrics: Dict[str, Any] = EvaluateRegressor({"y_train": self.y_train,
                                                                "y_eval": None,
                                                                "y_test": self.y_test,
                                                                "y_pred_train": y_pred_train,
                                                                "y_pred_eval": None,
                                                                "y_pred_test": y_pred_test,
-                                                               "target_col_names": self.target_col_list},
+                                                               "target_col_name": self.target_col_name},
                                                               self.model_name,
                                                               self.metric).calculate_and_print_metrics()
 
@@ -191,11 +185,11 @@ class HxLightGbmRegressor(HxMachineLearningBaseModel):
         # --------------------------------------------------------------------------------------------
 
         # ---- 2.1: Realizo las predicciones
-        y_pred_train = self.model.predict(self.x_train_df).reshape(-1, 1)
-        y_pred_test = self.model.predict(self.x_test_df).reshape(-1, 1)
+        y_pred_train = self.model.predict(self.x_train_df)
+        y_pred_test = self.model.predict(self.x_test_df)
 
         # ---- 2.2. Evalúo las metricas
-        EvaluateClassifier(
+        EvaluateRegressor(
             {
                 "y_train": self.y_train,
                 "y_eval": None,
@@ -203,7 +197,7 @@ class HxLightGbmRegressor(HxMachineLearningBaseModel):
                 "y_pred_train": y_pred_train,
                 "y_pred_eval": None,
                 "y_pred_test": y_pred_test,
-                "target_col_names": self.target_col_list
+                "target_col_name": self.target_col_name
             },
             self.model_name,
             self.metric).calculate_and_print_metrics()
@@ -213,7 +207,7 @@ class HxLightGbmRegressor(HxMachineLearningBaseModel):
         # --------------------------------------------------------------------------------------------
 
         # ---- 3.1: Almacenamiento del modelo
-        dump(self.model, f"{self.model_save_path}/lgbm_classifier.joblib")
+        dump(self.model, f"{self.model_save_path}/lgbm_regressor.joblib")
 
         # ---- 3.2: Obtencion de pesos (llamo al metodo polimorfeado self.get_weights)
         model_weights: List = self.get_weights(self.model)
@@ -225,35 +219,34 @@ class HxLightGbmRegressor(HxMachineLearningBaseModel):
         # -- 4: Realizo las predicciones de probabilidad en test (valor continuo entre 0 y 1) y las almaceno
         # --------------------------------------------------------------------------------------------
 
-        # ---- 4.1: Obtengo una matriz con la probabilidad negativa y positiva de x_train y x_test
-        x_train_probs: np.ndarray[tuple[int]] = np.repeat(self.model.predict_proba(self.x_train_df)[np.newaxis, :, :], 1, axis=0)
-        x_test_probs: np.ndarray[tuple[int]] = np.repeat(self.model.predict_proba(self.x_test_df)[np.newaxis, :, :], 1, axis=0)
+        # ---- 4.1: Obtengo una matriz con las prediciones
+        x_train_probs: np.ndarray[tuple[int]] = self.model.predict(self.x_train_df)
+        x_test_probs: np.ndarray[tuple[int]] = self.model.predict(self.x_test_df)
 
-        # ---- 4.2: Creo un diccionario llamado probs_result_dict en el que almaceno el y_test real y los de las probs
-        probs_result_dict: Dict[str, Any] = {}
+        # ---- 4.2: Creo un diccionario llamado probs_result_df en el que almaceno el y_test real y los de las probs
+        probs_result_dict: Dict[str, Any] = {
+            f'real_value_{self.target_col_name}': self.y_test[:, 0],
+            f'predict_value_{self.target_col_name}': x_test_probs
+        }
 
-        for i in range(self.y_test.shape[1]):
-            # Añadimos columnas de Valor Real, Probabilidad Negativa y Probabilidad Positiva para cada target
-            probs_result_dict[f'real_value_{self.target_col_list[i]}'] = self.y_test[:, i]
-            probs_result_dict[f'negative_proba_{self.target_col_list[i]}'] = x_test_probs[i][:, 0]  # Asegura que `probs` tiene 3 dimensiones
-            probs_result_dict[f'positive_proba_{self.target_col_list[i]}'] = x_test_probs[i][:, 1]
-
-        # ---- 4.3: Asigno probs_result_dict a un dataframe para trabajarlo con mas facilidad
+        # ---- 4.3: Asigno probs_result_df a un dataframe para trabajarlo con mas facilidad
         probs_result_df: pd.DataFrame = pd.DataFrame(probs_result_dict)
 
         # --------------------------------------------------------------------------------------------
         # -- 5: Instancio ClassifierMetricsCalculations para obtener toda la info del resultado y rellenar el self.master_dict
         # --------------------------------------------------------------------------------------------
 
-        # ---- 5.1: Obtengo el diccionario de metricas que proporciona ClassifierMetricsCalculations.run
-        metrics_dict: dict = ClassifierMetricsCalculations(df_result=probs_result_df,
-                                                           model_path=self.model_save_path,
-                                                           x_test=self.x_test_df,
-                                                           model=self.model,
-                                                           importances=model_weights,
-                                                           target_col_list=self.target_col_list,
-                                                           model_name=self.model_name,
-                                                           bins_dict=self.bins).run()
+        # ---- 5.1: Obtengo el diccionario de metricas que proporciona RegressorMetricsCalculations.run
+        metrics_dict: dict = RegressorMetricsCalculations(
+            probs_result_df,
+            self.model_save_path,
+            self.x_test_df,
+            self.model,
+            model_weights,
+            self.target_col_name,
+            self.model_name,
+            self.bins
+        ).run()
 
         # ---- 5.2: Relleno el self.master_dict
         self.master_result_dict[f"{self.model_name}"]: dict = {}
@@ -309,14 +302,15 @@ class HxLightGbmRegressor(HxMachineLearningBaseModel):
 
     @property
     def metric(self):
-        if self._metric not in ['accuracy', 'precision', 'recall', 'f1', 'specificity', 'balanced_acc', 'roc_auc']:
+        if self._metric not in ['mse', 'rmse', 'mae', 'msle', 'rmsle', 'mape']:
             raise ValueError(f'Invalid metric: {self._metric}')
         return self._metric
 
     @property
     def problem_type(self):
-        if self._problem_type not in ['binary', 'multiclass']:
-            raise ValueError(f'Invalid problem_type: {self._problem_type}. Must be binary or multiclass')
+        problem_type_list: List[str] = ['regression', 'regression_l1', 'quantile', 'tweedie']
+        if self._problem_type not in problem_type_list:
+            raise ValueError(f'Invalid problem_type: {self._problem_type}. Must be in {problem_type_list}')
         return self._problem_type
 
     # </editor-fold>

@@ -148,19 +148,19 @@ class HxXtremeGradientBoostingClassifier(HxMachineLearningBaseModel):
         # --------------------------------------------------------------------------------------------
 
         # ---- 2.1: Realizo las predicciones
-        y_pred_train = self.model.predict(self.x_train_df).reshape(-1, 1)
-        y_pred_test = self.model.predict(self.x_test_df).reshape(-1, 1)
+        y_pred_train = self.model.predict(self.x_train_df)
+        y_pred_test = self.model.predict(self.x_test_df)
 
         # ---- 2.2. Evalúo y almaceno las metricas
         metrics: Dict[str, Any] = EvaluateClassifier({"y_train": self.y_train,
-                                                               "y_eval": None,
-                                                               "y_test": self.y_test,
-                                                               "y_pred_train": y_pred_train,
-                                                               "y_pred_eval": None,
-                                                               "y_pred_test": y_pred_test,
-                                                               "target_col_names": self.target_col_list},
-                                                              self.model_name,
-                                                              self.metric).calculate_and_print_metrics()
+                                                      "y_eval": None,
+                                                      "y_test": self.y_test,
+                                                      "y_pred_train": y_pred_train,
+                                                      "y_pred_eval": None,
+                                                      "y_pred_test": y_pred_test,
+                                                      "target_col_name": self.target_col_name},
+                                                     self.model_name,
+                                                     self.metric).calculate_and_print_metrics()
 
         # ---- 2.3: Almaceno el diccionario de metricas como json en el path
         if save_metrics_dict:
@@ -204,8 +204,8 @@ class HxXtremeGradientBoostingClassifier(HxMachineLearningBaseModel):
         # --------------------------------------------------------------------------------------------
 
         # ---- 2.1: Realizo las predicciones
-        y_pred_train = self.model.predict(self.x_train_df).reshape(-1, 1)
-        y_pred_test = self.model.predict(self.x_test_df).reshape(-1, 1)
+        y_pred_train = self.model.predict(self.x_train_df)
+        y_pred_test = self.model.predict(self.x_test_df)
 
         # ---- 2.2. Evalúo las metricas
         EvaluateClassifier(
@@ -216,7 +216,7 @@ class HxXtremeGradientBoostingClassifier(HxMachineLearningBaseModel):
                 "y_pred_train": y_pred_train,
                 "y_pred_eval": None,
                 "y_pred_test": y_pred_test,
-                "target_col_names": self.target_col_list
+                "target_col_name": self.target_col_name
             },
             self.model_name,
             self.metric).calculate_and_print_metrics()
@@ -239,19 +239,17 @@ class HxXtremeGradientBoostingClassifier(HxMachineLearningBaseModel):
         # --------------------------------------------------------------------------------------------
 
         # ---- 4.1: Obtengo una matriz con la probabilidad negativa y positiva de x_train y x_test
-        x_train_probs: np.ndarray[tuple[int]] = np.repeat(self.model.predict_proba(self.x_train_df)[np.newaxis, :, :], 1, axis=0)
-        x_test_probs: np.ndarray[tuple[int]] = np.repeat(self.model.predict_proba(self.x_test_df)[np.newaxis, :, :], 1, axis=0)
+        x_train_probs: np.ndarray[tuple[int]] = self.model.predict_proba(self.x_train_df)
+        x_test_probs: np.ndarray[tuple[int]] = self.model.predict_proba(self.x_test_df)
 
-        # ---- 4.2: Creo un diccionario llamado probs_result_dict en el que almaceno el y_test real y los de las probs
-        probs_result_dict: Dict[str, Any] = {}
+        # ---- 4.2: Creo un diccionario llamado probs_result_df en el que almaceno el y_test real y los de las probs
+        probs_result_dict: Dict[str, Any] = {
+            f'real_value_{self.target_col_name}': self.y_test[:, 0],
+            f'negative_proba_{self.target_col_name}': x_test_probs[:, 0],
+            f'positive_proba_{self.target_col_name}': x_test_probs[:, 1]
+        }
 
-        for i in range(self.y_test.shape[1]):
-            # Añadimos columnas de Valor Real, Probabilidad Negativa y Probabilidad Positiva para cada target
-            probs_result_dict[f'real_value_{self.target_col_list[i]}'] = self.y_test[:, i]
-            probs_result_dict[f'negative_proba_{self.target_col_list[i]}'] = x_test_probs[i][:, 0]  # Asegura que `probs` tiene 3 dimensiones
-            probs_result_dict[f'positive_proba_{self.target_col_list[i]}'] = x_test_probs[i][:, 1]
-
-        # ---- 4.3: Asigno probs_result_dict a un dataframe para trabajarlo con mas facilidad
+        # ---- 4.3: Asigno probs_result_df a un dataframe para trabajarlo con mas facilidad
         probs_result_df: pd.DataFrame = pd.DataFrame(probs_result_dict)
 
         # --------------------------------------------------------------------------------------------
@@ -259,14 +257,16 @@ class HxXtremeGradientBoostingClassifier(HxMachineLearningBaseModel):
         # --------------------------------------------------------------------------------------------
 
         # ---- 5.1: Obtengo el diccionario de metricas que proporciona ClassifierMetricsCalculations.run
-        metrics_dict: dict = ClassifierMetricsCalculations(df_result=probs_result_df,
-                                                           model_path=self.model_save_path,
-                                                           x_test=self.x_test_df,
-                                                           model=self.model,
-                                                           importances=model_weights,
-                                                           target_col_list=self.target_col_list,
-                                                           model_name=self.model_name,
-                                                           bins_dict=self.bins).run()
+        metrics_dict: dict = ClassifierMetricsCalculations(
+            probs_result_df,
+            self.model_save_path,
+            self.x_test_df,
+            self.model,
+            model_weights,
+            self.target_col_name,
+            self.model_name,
+            self.bins
+        ).run()
 
         # ---- 5.2: Relleno el self.master_dict
         self.master_result_dict[f"{self.model_name}"]: dict = {}
