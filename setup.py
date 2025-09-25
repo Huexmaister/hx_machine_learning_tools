@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="hx_machine_learning_tools",
-    version="2025_09_25",
+    version="2025.09.25",
     author="Daniel Sarabia aka Huexmaister",
     author_email="dsarabiatorres@gmail.com",
     description="Librería de utilidades de modelos de machine learning",
